@@ -33,7 +33,6 @@ import {
   Document24Regular,
   Calendar24Regular,
   People24Regular,
-  NoteAdd24Regular,
   Edit24Regular,
   Location24Regular,
   Dismiss24Regular,
@@ -139,9 +138,7 @@ export default function TripDetailPage() {
   // Itinerary editing
   const [editingNotes, setEditingNotes] = useState('');
 
-  // New day dialog
-  const [dayDialogOpen, setDayDialogOpen] = useState(false);
-  const [newDay, setNewDay] = useState({ dayNumber: 1, theme: '', date: '' });
+
 
   // Activity dialog (shared for add / edit)
   const [activityDialogOpen, setActivityDialogOpen] = useState(false);
@@ -190,18 +187,21 @@ export default function TripDetailPage() {
   };
 
   // Convert populated place objects back to plain IDs for saving
-  const serializeItinerary = () =>
-    (trip.itinerary || []).map((day) => ({
+  const serializeActivities = (activities) =>
+    (activities || []).map((act) => ({
+      time: act.time,
+      placeName: act.placeName,
+      description: act.description,
+      notes: act.notes,
+      ...(act.place
+        ? { place: typeof act.place === 'object' ? act.place._id : act.place }
+        : {}),
+    }));
+
+  const serializeItinerary = (itinerary) =>
+    (itinerary || trip.itinerary || []).map((day) => ({
       ...day,
-      activities: (day.activities || []).map((act) => ({
-        time: act.time,
-        placeName: act.placeName,
-        description: act.description,
-        notes: act.notes,
-        ...(act.place
-          ? { place: typeof act.place === 'object' ? act.place._id : act.place }
-          : {}),
-      })),
+      activities: serializeActivities(day.activities),
     }));
 
   const saveTrip = async (updates) => {
@@ -216,20 +216,44 @@ export default function TripDetailPage() {
     }
   };
 
-  // ─── Day handlers ───────────────────────────────────────
+  // ─── Day helpers ────────────────────────────────────────
 
-  const handleAddDay = async () => {
-    const itinerary = [...serializeItinerary(), newDay];
-    await saveTrip({ itinerary });
-    setDayDialogOpen(false);
-    setNewDay({ dayNumber: (trip.itinerary?.length || 0) + 2, theme: '', date: '' });
+  /** Compute the date string for a given dayNumber based on a start date */
+  const dateForDay = (dayNumber, startDate) => {
+    const s = startDate || trip?.startDate;
+    if (!s) return '';
+    const d = new Date(s);
+    d.setDate(d.getDate() + dayNumber - 1);
+    return d.toISOString().slice(0, 10);
   };
 
-  const handleDeleteDay = async (dayIndex) => {
-    if (!window.confirm('Delete this day?')) return;
-    const itinerary = serializeItinerary().filter((_, i) => i !== dayIndex);
-    await saveTrip({ itinerary });
+  /** Build the canonical itinerary array from trip dates, preserving existing activities/themes */
+  const buildItinerary = (startDate, endDate, existingDays) => {
+    if (!startDate || !endDate) return existingDays || [];
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const count = Math.max(0, Math.round((end - start) / 86400000) + 1);
+    const days = [];
+    for (let i = 1; i <= count; i++) {
+      const existing = (existingDays || []).find((d) => d.dayNumber === i);
+      days.push({
+        dayNumber: i,
+        theme: existing?.theme || '',
+        date: dateForDay(i, startDate),
+        activities: existing?.activities || [],
+      });
+    }
+    return days;
   };
+
+  /** The itinerary to display — always derived from trip dates */
+  const displayItinerary = (() => {
+    if (!trip) return [];
+    if (trip.startDate && trip.endDate) {
+      return buildItinerary(trip.startDate, trip.endDate, trip.itinerary);
+    }
+    return trip.itinerary || [];
+  })();
 
   // ─── Activity handlers ──────────────────────────────────
 
@@ -245,7 +269,7 @@ export default function TripDetailPage() {
   };
 
   const openEditActivity = (dayIndex, actIndex) => {
-    const act = trip.itinerary[dayIndex].activities[actIndex];
+    const act = displayItinerary[dayIndex].activities[actIndex];
     setActivityMode('edit');
     setActivityDayIndex(dayIndex);
     setEditActivityIndex(actIndex);
@@ -262,7 +286,7 @@ export default function TripDetailPage() {
   };
 
   const handleSaveActivity = async () => {
-    const itinerary = serializeItinerary();
+    const itinerary = serializeItinerary(displayItinerary);
     const actData = {
       time: newActivity.time,
       placeName: newActivity.placeName,
@@ -289,7 +313,7 @@ export default function TripDetailPage() {
   };
 
   const handleDeleteActivity = async (dayIndex, actIndex) => {
-    const itinerary = serializeItinerary();
+    const itinerary = serializeItinerary(displayItinerary);
     itinerary[dayIndex].activities.splice(actIndex, 1);
     await saveTrip({ itinerary });
   };
@@ -397,7 +421,19 @@ export default function TripDetailPage() {
   };
 
   const handleSaveTripDetails = async () => {
-    await saveTrip(editTripForm);
+    const updates = { ...editTripForm };
+    // If dates changed, rebuild itinerary to match new date range
+    const oldStart = trip.startDate ? new Date(trip.startDate).toISOString().slice(0, 10) : '';
+    const oldEnd = trip.endDate ? new Date(trip.endDate).toISOString().slice(0, 10) : '';
+    if (updates.startDate && updates.endDate &&
+        (updates.startDate !== oldStart || updates.endDate !== oldEnd)) {
+      updates.itinerary = buildItinerary(
+        updates.startDate,
+        updates.endDate,
+        serializeItinerary(displayItinerary)
+      );
+    }
+    await saveTrip(updates);
     setEditTripOpen(false);
   };
 
@@ -471,59 +507,17 @@ export default function TripDetailPage() {
       {/* ═══════════ Itinerary Tab ═══════════ */}
       {activeTab === 'itinerary' && (
         <div className={styles.section}>
-          {canEdit && (
-            <Dialog open={dayDialogOpen} onOpenChange={(e, data) => setDayDialogOpen(data.open)}>
-              <DialogTrigger disableButtonEnhancement>
-                <Button icon={<Add24Regular />} appearance="primary" style={{ marginBottom: 16 }}>
-                  Add Day
-                </Button>
-              </DialogTrigger>
-              <DialogSurface>
-                <DialogBody>
-                  <DialogTitle>Add Day to Itinerary</DialogTitle>
-                  <DialogContent>
-                    <div className={styles.form}>
-                      <Field label="Day Number">
-                        <Input
-                          type="number"
-                          value={String(newDay.dayNumber)}
-                          onChange={(e, data) => setNewDay((p) => ({ ...p, dayNumber: parseInt(data.value) || 1 }))}
-                        />
-                      </Field>
-                      <Field label="Theme">
-                        <Input
-                          value={newDay.theme}
-                          onChange={(e, data) => setNewDay((p) => ({ ...p, theme: data.value }))}
-                          placeholder="e.g. Temples & the River"
-                        />
-                      </Field>
-                      <Field label="Date">
-                        <Input
-                          type="date"
-                          value={newDay.date}
-                          onChange={(e, data) => setNewDay((p) => ({ ...p, date: data.value }))}
-                        />
-                      </Field>
-                    </div>
-                  </DialogContent>
-                  <DialogActions>
-                    <DialogTrigger disableButtonEnhancement>
-                      <Button appearance="secondary">Cancel</Button>
-                    </DialogTrigger>
-                    <Button appearance="primary" onClick={handleAddDay}>Add</Button>
-                  </DialogActions>
-                </DialogBody>
-              </DialogSurface>
-            </Dialog>
-          )}
-
-          {(!trip.itinerary || trip.itinerary.length === 0) ? (
-            <Text>No days in the itinerary yet.</Text>
+          {displayItinerary.length === 0 ? (
+            <Text>
+              {trip.startDate && trip.endDate
+                ? 'No days in the itinerary yet.'
+                : 'Set trip start and end dates to generate the itinerary.'}
+            </Text>
           ) : (
-            trip.itinerary
+            displayItinerary
               .sort((a, b) => a.dayNumber - b.dayNumber)
               .map((day, dayIndex) => (
-                <Card key={dayIndex} className={styles.dayCard}>
+                <Card key={day.dayNumber} className={styles.dayCard}>
                   <CardHeader
                     header={
                       <Text weight="semibold" size={500}>
@@ -533,22 +527,14 @@ export default function TripDetailPage() {
                     description={day.date ? new Date(day.date).toLocaleDateString() : ''}
                     action={
                       canEdit && (
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <Button
-                            icon={<Add24Regular />}
-                            size="small"
-                            appearance="subtle"
-                            onClick={() => openAddActivity(dayIndex)}
-                          >
-                            Activity
-                          </Button>
-                          <Button
-                            icon={<Delete24Regular />}
-                            size="small"
-                            appearance="subtle"
-                            onClick={() => handleDeleteDay(dayIndex)}
-                          />
-                        </div>
+                        <Button
+                          icon={<Add24Regular />}
+                          size="small"
+                          appearance="subtle"
+                          onClick={() => openAddActivity(dayIndex)}
+                        >
+                          Activity
+                        </Button>
                       )
                     }
                   />
