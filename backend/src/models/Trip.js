@@ -48,6 +48,7 @@ async function create(data) {
       role: m.role || 'editor',
     })),
     itinerary: data.itinerary || [],
+    places: (data.places || []).map((p) => (typeof p === 'string' ? new ObjectId(p) : p)),
     notes: data.notes?.trim() || null,
     documents: data.documents || [],
     status: data.status || 'planning',
@@ -107,12 +108,13 @@ async function populateTrip(trip) {
   return trip;
 }
 
-// Populate including itinerary places
+// Populate including itinerary places and trip places list
 async function populateTripFull(trip) {
   if (!trip) return null;
   await populateTrip(trip);
   const Place = require('./Place');
 
+  // Populate itinerary activity places
   if (trip.itinerary) {
     for (const day of trip.itinerary) {
       if (day.activities) {
@@ -124,6 +126,18 @@ async function populateTripFull(trip) {
         }
       }
     }
+  }
+
+  // Populate trip places list
+  if (trip.places && trip.places.length) {
+    const populatedPlaces = [];
+    for (const placeId of trip.places) {
+      const placeDoc = await Place.findById(placeId);
+      if (placeDoc) populatedPlaces.push(placeDoc);
+    }
+    trip.places = populatedPlaces;
+  } else {
+    trip.places = [];
   }
 
   return trip;

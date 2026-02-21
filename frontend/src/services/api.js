@@ -54,6 +54,8 @@ export const updateTrip = (id, data) => api.put(`/trips/${id}`, data);
 export const deleteTrip = (id) => api.delete(`/trips/${id}`);
 export const addTripMember = (tripId, data) => api.post(`/trips/${tripId}/members`, data);
 export const removeTripMember = (tripId, userId) => api.delete(`/trips/${tripId}/members/${userId}`);
+export const addTripPlace = (tripId, placeId) => api.post(`/trips/${tripId}/places`, { placeId });
+export const removeTripPlace = (tripId, placeId) => api.delete(`/trips/${tripId}/places/${placeId}`);
 
 // Users
 export const searchUsers = (q) => api.get('/users/search', { params: { q } });

@@ -142,6 +142,64 @@ router.delete('/:id/members/:userId', async (req, res) => {
   }
 });
 
+// POST /api/trips/:id/places — add place to trip's places list (editors)
+router.post('/:id/places', async (req, res) => {
+  try {
+    const trip = await Trip.findById(req.params.id);
+
+    if (!trip) {
+      return res.status(404).json({ success: false, message: 'Trip not found' });
+    }
+
+    if (!Trip.canEdit(trip, req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { placeId } = req.body;
+    if (!placeId) {
+      return res.status(400).json({ success: false, message: 'placeId is required' });
+    }
+
+    // Check if already in list
+    const places = trip.places || [];
+    if (places.some((p) => p.toString() === placeId)) {
+      return res.json({ success: true, message: 'Place already in list' });
+    }
+
+    places.push(new ObjectId(placeId));
+    trip.places = places;
+    await Trip.save(trip);
+    await Trip.populateTripFull(trip);
+
+    res.json({ success: true, trip });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE /api/trips/:id/places/:placeId — remove place from trip's places list (editors)
+router.delete('/:id/places/:placeId', async (req, res) => {
+  try {
+    const trip = await Trip.findById(req.params.id);
+
+    if (!trip) {
+      return res.status(404).json({ success: false, message: 'Trip not found' });
+    }
+
+    if (!Trip.canEdit(trip, req.user._id)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    trip.places = (trip.places || []).filter((p) => p.toString() !== req.params.placeId);
+    await Trip.save(trip);
+    await Trip.populateTripFull(trip);
+
+    res.json({ success: true, trip });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // DELETE /api/trips/:id — delete trip (owner only)
 router.delete('/:id', async (req, res) => {
   try {

@@ -44,6 +44,8 @@ import {
   removeTripMember,
   searchUsers,
   getPlaces,
+  addTripPlace,
+  removeTripPlace,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -165,6 +167,11 @@ export default function TripDetailPage() {
   // Edit trip dialog
   const [editTripOpen, setEditTripOpen] = useState(false);
   const [editTripForm, setEditTripForm] = useState({});
+
+  // Trip places list search
+  const [tripPlaceSearch, setTripPlaceSearch] = useState('');
+  const [tripPlaceResults, setTripPlaceResults] = useState([]);
+  const [tripPlaceSearching, setTripPlaceSearching] = useState(false);
 
   useEffect(() => {
     fetchTrip();
@@ -307,6 +314,17 @@ export default function TripDetailPage() {
     }
 
     await saveTrip({ itinerary });
+
+    // Auto-add place to trip places list if linking a place
+    if (selectedPlace) {
+      try {
+        await addTripPlace(id, selectedPlace._id);
+      } catch (err) {
+        // Ignore — place may already be in list
+      }
+    }
+
+    await fetchTrip();
     setActivityDialogOpen(false);
     setNewActivity({ time: '', placeName: '', description: '', notes: '' });
     setSelectedPlace(null);
@@ -342,6 +360,45 @@ export default function TripDetailPage() {
     setNewActivity((prev) => ({ ...prev, placeName: place.name }));
     setPlaceSearch('');
     setPlaceResults([]);
+  };
+
+  // ─── Trip places list ──────────────────────────────────
+
+  const handleTripPlaceSearch = async (query) => {
+    setTripPlaceSearch(query);
+    if (query.length >= 2) {
+      setTripPlaceSearching(true);
+      try {
+        const res = await getPlaces({ search: query, limit: 10 });
+        setTripPlaceResults(res.data.places);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setTripPlaceSearching(false);
+      }
+    } else {
+      setTripPlaceResults([]);
+    }
+  };
+
+  const handleAddTripPlace = async (placeId) => {
+    try {
+      await addTripPlace(id, placeId);
+      await fetchTrip();
+      setTripPlaceSearch('');
+      setTripPlaceResults([]);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleRemoveTripPlace = async (placeId) => {
+    try {
+      await removeTripPlace(id, placeId);
+      await fetchTrip();
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // ─── Notes ──────────────────────────────────────────────
@@ -497,6 +554,7 @@ export default function TripDetailPage() {
       {/* ─── Tabs ─────────────────────────────────── */}
       <TabList selectedValue={activeTab} onTabSelect={(e, data) => setActiveTab(data.value)}>
         <Tab value="itinerary">Itinerary</Tab>
+        <Tab value="places">Places</Tab>
         <Tab value="notes">Notes</Tab>
         <Tab value="documents">Documents</Tab>
         <Tab value="members">Members</Tab>
@@ -721,6 +779,104 @@ export default function TripDetailPage() {
               </DialogBody>
             </DialogSurface>
           </Dialog>
+        </div>
+      )}
+
+      {/* ═══════════ Places Tab ═══════════ */}
+      {activeTab === 'places' && (
+        <div className={styles.section}>
+          <Text size={500} weight="semibold">Trip Places</Text>
+          <Text style={{ display: 'block', marginBottom: 12 }}>
+            Your curated list of places to visit on this trip.
+          </Text>
+
+          {canEdit && (
+            <div style={{ marginBottom: 16 }}>
+              <Field label="Add a place">
+                <Input
+                  placeholder="Search places..."
+                  value={tripPlaceSearch}
+                  onChange={(e, data) => handleTripPlaceSearch(data.value)}
+                />
+              </Field>
+              {tripPlaceSearching && <Spinner size="tiny" label="Searching..." />}
+              {tripPlaceResults.length > 0 && (
+                <div style={{ border: '1px solid #e0e0e0', borderRadius: 6, marginTop: 4, maxHeight: 220, overflowY: 'auto' }}>
+                  {tripPlaceResults.map((p) => {
+                    const alreadyAdded = trip.places?.some(
+                      (tp) => (tp._id || tp) === p._id
+                    );
+                    return (
+                      <div
+                        key={p._id}
+                        className={styles.placeResultItem}
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                      >
+                        <div>
+                          <Text weight="semibold">{p.name}</Text>
+                          <Text size={200} style={{ marginLeft: 8 }}>
+                            {[p.city, p.country].filter(Boolean).join(', ')}
+                          </Text>
+                          {p.type && (
+                            <Badge appearance="outline" style={{ marginLeft: 8 }}>{p.type}</Badge>
+                          )}
+                        </div>
+                        <Button
+                          size="small"
+                          appearance="primary"
+                          disabled={alreadyAdded}
+                          onClick={() => handleAddTripPlace(p._id)}
+                        >
+                          {alreadyAdded ? 'Added' : 'Add'}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {(!trip.places || trip.places.length === 0) && (
+            <Text italic style={{ color: '#888' }}>No places added yet.</Text>
+          )}
+
+          {trip.places && trip.places.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {trip.places.map((place) => {
+                const p = typeof place === 'object' ? place : { _id: place, name: place };
+                return (
+                  <div
+                    key={p._id}
+                    className={styles.memberRow}
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  >
+                    <div>
+                      <Text weight="semibold">{p.name}</Text>
+                      <Text size={200} style={{ marginLeft: 8 }}>
+                        {[p.city, p.country].filter(Boolean).join(', ')}
+                      </Text>
+                      {p.type && (
+                        <Badge appearance="outline" style={{ marginLeft: 8 }}>{p.type}</Badge>
+                      )}
+                      {p.fee && (
+                        <Text size={200} style={{ marginLeft: 8 }}>\u00a0\u00b7\u00a0{p.fee}</Text>
+                      )}
+                    </div>
+                    {canEdit && (
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<Dismiss24Regular />}
+                        onClick={() => handleRemoveTripPlace(p._id)}
+                        title="Remove from trip"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
