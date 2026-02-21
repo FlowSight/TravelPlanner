@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm run render-build
-    startCommand: cd backend && NODE_ENV=production node src/server.js
+    startCommand: NODE_ENV=production node backend/src/server.js
     envVars:
       - key: NODE_ENV
         value: production
