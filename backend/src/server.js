@@ -44,7 +44,7 @@ if (process.env.NODE_ENV === 'production') {
   const frontendBuild = path.join(__dirname, '../../frontend/dist');
   app.use(express.static(frontendBuild));
   // For any non-API route, serve index.html (SPA client-side routing)
-  app.get('*', (req, res) => {
+  app.get('/{*splat}', (req, res) => {
     res.sendFile(path.join(frontendBuild, 'index.html'));
   });
 }
