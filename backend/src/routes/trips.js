@@ -79,7 +79,7 @@ router.put('/:id', async (req, res) => {
     delete req.body.owner;
 
     const updated = await Trip.findByIdAndUpdate(req.params.id, req.body);
-    await Trip.populateTrip(updated);
+    await Trip.populateTripFull(updated);
 
     res.json({ success: true, trip: updated });
   } catch (error) {

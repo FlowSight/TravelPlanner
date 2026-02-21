@@ -37,13 +37,18 @@ async function create(data) {
 
   const doc = {
     name: data.name?.trim(),
-    email: data.email?.toLowerCase().trim() || null,
-    phone: data.phone?.trim() || null,
     password: hashedPassword,
     role: data.role || 'user',
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+
+  // Only include email/phone when provided so sparse unique indexes work
+  const email = data.email?.toLowerCase().trim();
+  if (email) doc.email = email;
+
+  const phone = data.phone?.trim();
+  if (phone) doc.phone = phone;
 
   const result = await col().insertOne(doc);
   const { password, ...userWithoutPassword } = doc;

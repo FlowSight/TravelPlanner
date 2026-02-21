@@ -34,8 +34,18 @@ import {
   Calendar24Regular,
   People24Regular,
   NoteAdd24Regular,
+  Edit24Regular,
+  Location24Regular,
+  Dismiss24Regular,
 } from '@fluentui/react-icons';
-import { getTrip, updateTrip, addTripMember, removeTripMember, searchUsers } from '../services/api';
+import {
+  getTrip,
+  updateTrip,
+  addTripMember,
+  removeTripMember,
+  searchUsers,
+  getPlaces,
+} from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 const useStyles = makeStyles({
@@ -80,6 +90,40 @@ const useStyles = makeStyles({
     padding: '8px 0',
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
+  placeSearchContainer: {
+    position: 'relative',
+  },
+  placeResults: {
+    maxHeight: '200px',
+    overflowY: 'auto',
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusMedium,
+    marginTop: '4px',
+  },
+  placeResultItem: {
+    padding: '8px 12px',
+    cursor: 'pointer',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  placeChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '6px 12px',
+    backgroundColor: tokens.colorBrandBackground2,
+    borderRadius: tokens.borderRadiusCircular,
+    marginTop: '4px',
+  },
+  placeInfo: {
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'center',
+    marginTop: '2px',
+    flexWrap: 'wrap',
+  },
 });
 
 export default function TripDetailPage() {
@@ -99,10 +143,18 @@ export default function TripDetailPage() {
   const [dayDialogOpen, setDayDialogOpen] = useState(false);
   const [newDay, setNewDay] = useState({ dayNumber: 1, theme: '', date: '' });
 
-  // New activity dialog
+  // Activity dialog (shared for add / edit)
   const [activityDialogOpen, setActivityDialogOpen] = useState(false);
   const [activityDayIndex, setActivityDayIndex] = useState(0);
   const [newActivity, setNewActivity] = useState({ time: '', placeName: '', description: '', notes: '' });
+  const [activityMode, setActivityMode] = useState('add'); // 'add' | 'edit'
+  const [editActivityIndex, setEditActivityIndex] = useState(null);
+
+  // Place search inside activity dialog
+  const [placeSearch, setPlaceSearch] = useState('');
+  const [placeResults, setPlaceResults] = useState([]);
+  const [selectedPlace, setSelectedPlace] = useState(null);
+  const [placeSearching, setPlaceSearching] = useState(false);
 
   // New document dialog
   const [docDialogOpen, setDocDialogOpen] = useState(false);
@@ -112,6 +164,10 @@ export default function TripDetailPage() {
   const [memberDialogOpen, setMemberDialogOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
   const [memberResults, setMemberResults] = useState([]);
+
+  // Edit trip dialog
+  const [editTripOpen, setEditTripOpen] = useState(false);
+  const [editTripForm, setEditTripForm] = useState({});
 
   useEffect(() => {
     fetchTrip();
@@ -133,11 +189,26 @@ export default function TripDetailPage() {
     }
   };
 
+  // Convert populated place objects back to plain IDs for saving
+  const serializeItinerary = () =>
+    (trip.itinerary || []).map((day) => ({
+      ...day,
+      activities: (day.activities || []).map((act) => ({
+        time: act.time,
+        placeName: act.placeName,
+        description: act.description,
+        notes: act.notes,
+        ...(act.place
+          ? { place: typeof act.place === 'object' ? act.place._id : act.place }
+          : {}),
+      })),
+    }));
+
   const saveTrip = async (updates) => {
     setSaving(true);
     try {
-      const res = await updateTrip(id, updates);
-      setTrip(res.data.trip);
+      await updateTrip(id, updates);
+      await fetchTrip(); // re-fetch to get full place population
     } catch (err) {
       console.error('Failed to save:', err);
     } finally {
@@ -145,8 +216,10 @@ export default function TripDetailPage() {
     }
   };
 
+  // ─── Day handlers ───────────────────────────────────────
+
   const handleAddDay = async () => {
-    const itinerary = [...(trip.itinerary || []), newDay];
+    const itinerary = [...serializeItinerary(), newDay];
     await saveTrip({ itinerary });
     setDayDialogOpen(false);
     setNewDay({ dayNumber: (trip.itinerary?.length || 0) + 2, theme: '', date: '' });
@@ -154,30 +227,106 @@ export default function TripDetailPage() {
 
   const handleDeleteDay = async (dayIndex) => {
     if (!window.confirm('Delete this day?')) return;
-    const itinerary = trip.itinerary.filter((_, i) => i !== dayIndex);
+    const itinerary = serializeItinerary().filter((_, i) => i !== dayIndex);
     await saveTrip({ itinerary });
   };
 
-  const handleAddActivity = async () => {
-    const itinerary = [...trip.itinerary];
-    if (!itinerary[activityDayIndex].activities) {
-      itinerary[activityDayIndex].activities = [];
+  // ─── Activity handlers ──────────────────────────────────
+
+  const openAddActivity = (dayIndex) => {
+    setActivityMode('add');
+    setActivityDayIndex(dayIndex);
+    setEditActivityIndex(null);
+    setNewActivity({ time: '', placeName: '', description: '', notes: '' });
+    setSelectedPlace(null);
+    setPlaceSearch('');
+    setPlaceResults([]);
+    setActivityDialogOpen(true);
+  };
+
+  const openEditActivity = (dayIndex, actIndex) => {
+    const act = trip.itinerary[dayIndex].activities[actIndex];
+    setActivityMode('edit');
+    setActivityDayIndex(dayIndex);
+    setEditActivityIndex(actIndex);
+    setNewActivity({
+      time: act.time || '',
+      placeName: act.placeName || '',
+      description: act.description || '',
+      notes: act.notes || '',
+    });
+    setSelectedPlace(act.place && typeof act.place === 'object' ? act.place : null);
+    setPlaceSearch('');
+    setPlaceResults([]);
+    setActivityDialogOpen(true);
+  };
+
+  const handleSaveActivity = async () => {
+    const itinerary = serializeItinerary();
+    const actData = {
+      time: newActivity.time,
+      placeName: newActivity.placeName,
+      description: newActivity.description,
+      notes: newActivity.notes,
+    };
+    if (selectedPlace) {
+      actData.place = selectedPlace._id;
     }
-    itinerary[activityDayIndex].activities.push(newActivity);
+
+    if (activityMode === 'edit' && editActivityIndex !== null) {
+      itinerary[activityDayIndex].activities[editActivityIndex] = actData;
+    } else {
+      if (!itinerary[activityDayIndex].activities) {
+        itinerary[activityDayIndex].activities = [];
+      }
+      itinerary[activityDayIndex].activities.push(actData);
+    }
+
     await saveTrip({ itinerary });
     setActivityDialogOpen(false);
     setNewActivity({ time: '', placeName: '', description: '', notes: '' });
+    setSelectedPlace(null);
   };
 
   const handleDeleteActivity = async (dayIndex, actIndex) => {
-    const itinerary = [...trip.itinerary];
+    const itinerary = serializeItinerary();
     itinerary[dayIndex].activities.splice(actIndex, 1);
     await saveTrip({ itinerary });
   };
 
+  // ─── Place search (inside activity dialog) ─────────────
+
+  const handlePlaceSearch = async (query) => {
+    setPlaceSearch(query);
+    if (query.length >= 2) {
+      setPlaceSearching(true);
+      try {
+        const res = await getPlaces({ search: query, limit: 10 });
+        setPlaceResults(res.data.places);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setPlaceSearching(false);
+      }
+    } else {
+      setPlaceResults([]);
+    }
+  };
+
+  const handleSelectPlace = (place) => {
+    setSelectedPlace(place);
+    setNewActivity((prev) => ({ ...prev, placeName: place.name }));
+    setPlaceSearch('');
+    setPlaceResults([]);
+  };
+
+  // ─── Notes ──────────────────────────────────────────────
+
   const handleSaveNotes = async () => {
     await saveTrip({ notes: editingNotes });
   };
+
+  // ─── Documents ──────────────────────────────────────────
 
   const handleAddDoc = async () => {
     const documents = [...(trip.documents || []), newDoc];
@@ -190,6 +339,8 @@ export default function TripDetailPage() {
     const documents = trip.documents.filter((_, i) => i !== docIndex);
     await saveTrip({ documents });
   };
+
+  // ─── Members ────────────────────────────────────────────
 
   const handleSearchMembers = async (q) => {
     setMemberSearch(q);
@@ -227,6 +378,31 @@ export default function TripDetailPage() {
     }
   };
 
+  // ─── Edit trip details ─────────────────────────────────
+
+  const openEditTrip = () => {
+    setEditTripForm({
+      title: trip.title || '',
+      destination: trip.destination || '',
+      description: trip.description || '',
+      startDate: trip.startDate
+        ? new Date(trip.startDate).toISOString().slice(0, 10)
+        : '',
+      endDate: trip.endDate
+        ? new Date(trip.endDate).toISOString().slice(0, 10)
+        : '',
+      status: trip.status || 'planning',
+    });
+    setEditTripOpen(true);
+  };
+
+  const handleSaveTripDetails = async () => {
+    await saveTrip(editTripForm);
+    setEditTripOpen(false);
+  };
+
+  // ─── Loading / not found ────────────────────────────────
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', marginTop: 100 }}>
@@ -248,7 +424,7 @@ export default function TripDetailPage() {
 
   return (
     <div className="page-container">
-      {/* Header */}
+      {/* ─── Header ───────────────────────────────── */}
       <div className={styles.header}>
         <div>
           <Button icon={<ArrowLeft24Regular />} appearance="subtle" onClick={() => navigate('/trips')}>
@@ -263,16 +439,26 @@ export default function TripDetailPage() {
             {trip.startDate ? new Date(trip.startDate).toLocaleDateString() : '—'} —{' '}
             {trip.endDate ? new Date(trip.endDate).toLocaleDateString() : '—'}
           </Text>
-          <div style={{ marginTop: 8 }}>
+          {trip.description && (
+            <Text size={200} block style={{ marginTop: 4, color: tokens.colorNeutralForeground3 }}>
+              {trip.description}
+            </Text>
+          )}
+          <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
             <Badge appearance="tint" color="brand" style={{ textTransform: 'capitalize' }}>
               {trip.status}
             </Badge>
+            {canEdit && (
+              <Button icon={<Edit24Regular />} appearance="subtle" size="small" onClick={openEditTrip}>
+                Edit
+              </Button>
+            )}
           </div>
         </div>
         {saving && <Spinner size="tiny" label="Saving..." />}
       </div>
 
-      {/* Tabs */}
+      {/* ─── Tabs ─────────────────────────────────── */}
       <TabList selectedValue={activeTab} onTabSelect={(e, data) => setActiveTab(data.value)}>
         <Tab value="itinerary">Itinerary</Tab>
         <Tab value="notes">Notes</Tab>
@@ -282,7 +468,7 @@ export default function TripDetailPage() {
 
       <Divider style={{ marginTop: 8 }} />
 
-      {/* Itinerary Tab */}
+      {/* ═══════════ Itinerary Tab ═══════════ */}
       {activeTab === 'itinerary' && (
         <div className={styles.section}>
           {canEdit && (
@@ -352,10 +538,7 @@ export default function TripDetailPage() {
                             icon={<Add24Regular />}
                             size="small"
                             appearance="subtle"
-                            onClick={() => {
-                              setActivityDayIndex(dayIndex);
-                              setActivityDialogOpen(true);
-                            }}
+                            onClick={() => openAddActivity(dayIndex)}
                           >
                             Activity
                           </Button>
@@ -369,6 +552,7 @@ export default function TripDetailPage() {
                       )
                     }
                   />
+
                   {day.activities && day.activities.length > 0 ? (
                     day.activities.map((act, actIndex) => (
                       <div key={actIndex} className={styles.activityRow}>
@@ -377,7 +561,34 @@ export default function TripDetailPage() {
                         </Text>
                         <div style={{ flex: 1 }}>
                           <Text weight="semibold">{act.placeName || 'Untitled'}</Text>
-                          {act.description && <Text size={200} block>{act.description}</Text>}
+                          {act.place && typeof act.place === 'object' && (
+                            <div className={styles.placeInfo}>
+                              <Badge appearance="tint" size="small" style={{ textTransform: 'capitalize' }}>
+                                {act.place.type}
+                              </Badge>
+                              {act.place.city && (
+                                <Text size={200}>
+                                  {act.place.city}, {act.place.country}
+                                </Text>
+                              )}
+                              {act.place.fee && act.place.fee !== 'Free' && (
+                                <Text size={200}>Fee: {act.place.fee}</Text>
+                              )}
+                              {act.place.timing && <Text size={200}>{act.place.timing}</Text>}
+                              {act.place.googleMapUrl && (
+                                <a href={act.place.googleMapUrl} target="_blank" rel="noopener noreferrer">
+                                  <Button icon={<Location24Regular />} size="small" appearance="subtle">
+                                    Map
+                                  </Button>
+                                </a>
+                              )}
+                            </div>
+                          )}
+                          {act.description && (
+                            <Text size={200} block>
+                              {act.description}
+                            </Text>
+                          )}
                           {act.notes && (
                             <Text size={200} block style={{ color: tokens.colorNeutralForeground3 }}>
                               {act.notes}
@@ -385,12 +596,20 @@ export default function TripDetailPage() {
                           )}
                         </div>
                         {canEdit && (
-                          <Button
-                            icon={<Delete24Regular />}
-                            size="small"
-                            appearance="subtle"
-                            onClick={() => handleDeleteActivity(dayIndex, actIndex)}
-                          />
+                          <div style={{ display: 'flex', gap: 2 }}>
+                            <Button
+                              icon={<Edit24Regular />}
+                              size="small"
+                              appearance="subtle"
+                              onClick={() => openEditActivity(dayIndex, actIndex)}
+                            />
+                            <Button
+                              icon={<Delete24Regular />}
+                              size="small"
+                              appearance="subtle"
+                              onClick={() => handleDeleteActivity(dayIndex, actIndex)}
+                            />
+                          </div>
                         )}
                       </div>
                     ))
@@ -403,11 +622,13 @@ export default function TripDetailPage() {
               ))
           )}
 
-          {/* Add Activity Dialog */}
+          {/* Add / Edit Activity Dialog */}
           <Dialog open={activityDialogOpen} onOpenChange={(e, data) => setActivityDialogOpen(data.open)}>
             <DialogSurface>
               <DialogBody>
-                <DialogTitle>Add Activity</DialogTitle>
+                <DialogTitle>
+                  {activityMode === 'edit' ? 'Edit Activity' : 'Add Activity'}
+                </DialogTitle>
                 <DialogContent>
                   <div className={styles.form}>
                     <Field label="Time">
@@ -417,13 +638,76 @@ export default function TripDetailPage() {
                         placeholder="e.g. 9:00 AM"
                       />
                     </Field>
-                    <Field label="Place Name">
+
+                    {/* Place picker */}
+                    <Field label="Link a Place (optional)">
+                      {selectedPlace ? (
+                        <div className={styles.placeChip}>
+                          <Location24Regular />
+                          <div>
+                            <Text weight="semibold">{selectedPlace.name}</Text>
+                            {selectedPlace.city && (
+                              <Text size={200} block>
+                                {selectedPlace.city}, {selectedPlace.country}
+                              </Text>
+                            )}
+                          </div>
+                          <Button
+                            icon={<Dismiss24Regular />}
+                            size="small"
+                            appearance="subtle"
+                            onClick={() => {
+                              setSelectedPlace(null);
+                              setNewActivity((p) => ({ ...p, placeName: '' }));
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div className={styles.placeSearchContainer}>
+                          <Input
+                            value={placeSearch}
+                            onChange={(e, data) => handlePlaceSearch(data.value)}
+                            placeholder="Search places by name..."
+                            contentAfter={placeSearching ? <Spinner size="tiny" /> : undefined}
+                          />
+                          {placeResults.length > 0 && (
+                            <div className={styles.placeResults}>
+                              {placeResults.map((p) => (
+                                <div
+                                  key={p._id}
+                                  className={styles.placeResultItem}
+                                  onClick={() => handleSelectPlace(p)}
+                                  role="button"
+                                  tabIndex={0}
+                                >
+                                  <div>
+                                    <Text weight="semibold">{p.name}</Text>
+                                    <Text size={200} block>
+                                      {[p.city, p.country].filter(Boolean).join(', ')}
+                                    </Text>
+                                  </div>
+                                  <Badge appearance="tint" size="small" style={{ textTransform: 'capitalize' }}>
+                                    {p.type}
+                                  </Badge>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </Field>
+
+                    <Field
+                      label="Place Name"
+                      hint={selectedPlace ? 'Auto-filled from selected place' : ''}
+                    >
                       <Input
                         value={newActivity.placeName}
                         onChange={(e, data) => setNewActivity((p) => ({ ...p, placeName: data.value }))}
                         placeholder="e.g. Wat Phra Kaew"
                       />
                     </Field>
+
                     <Field label="Description">
                       <Textarea
                         value={newActivity.description}
@@ -444,7 +728,9 @@ export default function TripDetailPage() {
                   <DialogTrigger disableButtonEnhancement>
                     <Button appearance="secondary">Cancel</Button>
                   </DialogTrigger>
-                  <Button appearance="primary" onClick={handleAddActivity}>Add</Button>
+                  <Button appearance="primary" onClick={handleSaveActivity}>
+                    {activityMode === 'edit' ? 'Save' : 'Add'}
+                  </Button>
                 </DialogActions>
               </DialogBody>
             </DialogSurface>
@@ -452,7 +738,7 @@ export default function TripDetailPage() {
         </div>
       )}
 
-      {/* Notes Tab */}
+      {/* ═══════════ Notes Tab ═══════════ */}
       {activeTab === 'notes' && (
         <div className={styles.section}>
           <Field label="Trip Notes">
@@ -479,7 +765,7 @@ export default function TripDetailPage() {
         </div>
       )}
 
-      {/* Documents Tab */}
+      {/* ═══════════ Documents Tab ═══════════ */}
       {activeTab === 'documents' && (
         <div className={styles.section}>
           {canEdit && (
@@ -575,7 +861,7 @@ export default function TripDetailPage() {
         </div>
       )}
 
-      {/* Members Tab */}
+      {/* ═══════════ Members Tab ═══════════ */}
       {activeTab === 'members' && (
         <div className={styles.section}>
           {isOwner && (
@@ -646,6 +932,79 @@ export default function TripDetailPage() {
           </Card>
         </div>
       )}
+
+      {/* ═══════════ Edit Trip Dialog ═══════════ */}
+      <Dialog open={editTripOpen} onOpenChange={(e, data) => setEditTripOpen(data.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Edit Trip Details</DialogTitle>
+            <DialogContent>
+              <div className={styles.form}>
+                <Field label="Title" required>
+                  <Input
+                    value={editTripForm.title || ''}
+                    onChange={(e, data) => setEditTripForm((p) => ({ ...p, title: data.value }))}
+                  />
+                </Field>
+                <Field label="Destination">
+                  <Input
+                    value={editTripForm.destination || ''}
+                    onChange={(e, data) => setEditTripForm((p) => ({ ...p, destination: data.value }))}
+                    placeholder="e.g. Bangkok, Thailand"
+                  />
+                </Field>
+                <Field label="Description">
+                  <Textarea
+                    value={editTripForm.description || ''}
+                    onChange={(e, data) => setEditTripForm((p) => ({ ...p, description: data.value }))}
+                    placeholder="Brief description of the trip"
+                  />
+                </Field>
+                <Field label="Start Date">
+                  <Input
+                    type="date"
+                    value={editTripForm.startDate || ''}
+                    onChange={(e, data) => setEditTripForm((p) => ({ ...p, startDate: data.value }))}
+                  />
+                </Field>
+                <Field label="End Date">
+                  <Input
+                    type="date"
+                    value={editTripForm.endDate || ''}
+                    onChange={(e, data) => setEditTripForm((p) => ({ ...p, endDate: data.value }))}
+                  />
+                </Field>
+                <Field label="Status">
+                  <Dropdown
+                    value={editTripForm.status || 'planning'}
+                    onOptionSelect={(e, data) =>
+                      setEditTripForm((p) => ({ ...p, status: data.optionValue }))
+                    }
+                  >
+                    {['planning', 'confirmed', 'in-progress', 'completed', 'cancelled'].map((s) => (
+                      <Option key={s} value={s}>
+                        {s.charAt(0).toUpperCase() + s.slice(1)}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                </Field>
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <DialogTrigger disableButtonEnhancement>
+                <Button appearance="secondary">Cancel</Button>
+              </DialogTrigger>
+              <Button
+                appearance="primary"
+                onClick={handleSaveTripDetails}
+                disabled={!editTripForm.title}
+              >
+                Save
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   );
 }
