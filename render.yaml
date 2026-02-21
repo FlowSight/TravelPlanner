@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: travelplanner
+    runtime: node
+    plan: free
+    buildCommand: npm run render-build
+    startCommand: cd backend && NODE_ENV=production node src/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false          # you'll set this in the Render dashboard
+      - key: JWT_SECRET
+        generateValue: true  # auto-generates a secure random value
+      - key: JWT_EXPIRES_IN
+        value: 7d
