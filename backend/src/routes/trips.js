@@ -155,18 +155,33 @@ router.post('/:id/places', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    const { placeId } = req.body;
-    if (!placeId) {
-      return res.status(400).json({ success: false, message: 'placeId is required' });
+    const { placeId, customPlace } = req.body;
+    if (!placeId && !customPlace) {
+      return res.status(400).json({ success: false, message: 'placeId or customPlace is required' });
     }
 
-    // Check if already in list
     const places = trip.places || [];
-    if (places.some((p) => p.toString() === placeId)) {
-      return res.json({ success: true, message: 'Place already in list' });
+
+    if (placeId) {
+      // Add reference to global place (idempotent)
+      if (places.some((p) => p && p.toString && p.toString() === placeId)) {
+        return res.json({ success: true, message: 'Place already in list' });
+      }
+      places.push(new ObjectId(placeId));
+    } else {
+      // Add custom inline place (trip-local)
+      places.push({
+        _id: new ObjectId().toString(),
+        custom: true,
+        name: (customPlace.name || '').trim(),
+        city: (customPlace.city || '').trim() || null,
+        country: (customPlace.country || '').trim() || null,
+        type: (customPlace.type || '').trim() || null,
+        notes: (customPlace.notes || '').trim() || null,
+        googleMapUrl: (customPlace.googleMapUrl || '').trim() || null,
+      });
     }
 
-    places.push(new ObjectId(placeId));
     trip.places = places;
     await Trip.save(trip);
     await Trip.populateTripFull(trip);
@@ -190,7 +205,12 @@ router.delete('/:id/places/:placeId', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    trip.places = (trip.places || []).filter((p) => p.toString() !== req.params.placeId);
+    trip.places = (trip.places || []).filter((p) => {
+      // Custom inline place: compare _id string
+      if (p && typeof p === 'object' && p.custom) return p._id !== req.params.placeId;
+      // ObjectId reference
+      return p.toString() !== req.params.placeId;
+    });
     await Trip.save(trip);
     await Trip.populateTripFull(trip);
 

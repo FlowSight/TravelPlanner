@@ -45,6 +45,7 @@ import {
   searchUsers,
   getPlaces,
   addTripPlace,
+  addCustomTripPlace,
   removeTripPlace,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -145,7 +146,7 @@ export default function TripDetailPage() {
   // Activity dialog (shared for add / edit)
   const [activityDialogOpen, setActivityDialogOpen] = useState(false);
   const [activityDayIndex, setActivityDayIndex] = useState(0);
-  const [newActivity, setNewActivity] = useState({ time: '', placeName: '', description: '', notes: '' });
+  const [newActivity, setNewActivity] = useState({ time: '', endTime: '', placeName: '', description: '', notes: '' });
   const [activityMode, setActivityMode] = useState('add'); // 'add' | 'edit'
   const [editActivityIndex, setEditActivityIndex] = useState(null);
 
@@ -173,6 +174,10 @@ export default function TripDetailPage() {
   const [tripPlaceResults, setTripPlaceResults] = useState([]);
   const [tripPlaceSearching, setTripPlaceSearching] = useState(false);
 
+  // Custom place form
+  const [customPlaceOpen, setCustomPlaceOpen] = useState(false);
+  const [customPlaceForm, setCustomPlaceForm] = useState({ name: '', city: '', country: '', type: '', notes: '', googleMapUrl: '' });
+
   useEffect(() => {
     fetchTrip();
   }, [id]);
@@ -197,6 +202,7 @@ export default function TripDetailPage() {
   const serializeActivities = (activities) =>
     (activities || []).map((act) => ({
       time: act.time,
+      endTime: act.endTime,
       placeName: act.placeName,
       description: act.description,
       notes: act.notes,
@@ -268,7 +274,7 @@ export default function TripDetailPage() {
     setActivityMode('add');
     setActivityDayIndex(dayIndex);
     setEditActivityIndex(null);
-    setNewActivity({ time: '', placeName: '', description: '', notes: '' });
+    setNewActivity({ time: '', endTime: '', placeName: '', description: '', notes: '' });
     setSelectedPlace(null);
     setPlaceSearch('');
     setPlaceResults([]);
@@ -282,6 +288,7 @@ export default function TripDetailPage() {
     setEditActivityIndex(actIndex);
     setNewActivity({
       time: act.time || '',
+      endTime: act.endTime || '',
       placeName: act.placeName || '',
       description: act.description || '',
       notes: act.notes || '',
@@ -296,6 +303,7 @@ export default function TripDetailPage() {
     const itinerary = serializeItinerary(displayItinerary);
     const actData = {
       time: newActivity.time,
+      endTime: newActivity.endTime,
       placeName: newActivity.placeName,
       description: newActivity.description,
       notes: newActivity.notes,
@@ -326,7 +334,7 @@ export default function TripDetailPage() {
 
     await fetchTrip();
     setActivityDialogOpen(false);
-    setNewActivity({ time: '', placeName: '', description: '', notes: '' });
+    setNewActivity({ time: '', endTime: '', placeName: '', description: '', notes: '' });
     setSelectedPlace(null);
   };
 
@@ -396,6 +404,18 @@ export default function TripDetailPage() {
     try {
       await removeTripPlace(id, placeId);
       await fetchTrip();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddCustomPlace = async () => {
+    if (!customPlaceForm.name.trim() || !customPlaceForm.googleMapUrl.trim()) return;
+    try {
+      await addCustomTripPlace(id, customPlaceForm);
+      await fetchTrip();
+      setCustomPlaceForm({ name: '', city: '', country: '', type: '', notes: '', googleMapUrl: '' });
+      setCustomPlaceOpen(false);
     } catch (err) {
       console.error(err);
     }
@@ -600,8 +620,8 @@ export default function TripDetailPage() {
                   {day.activities && day.activities.length > 0 ? (
                     day.activities.map((act, actIndex) => (
                       <div key={actIndex} className={styles.activityRow}>
-                        <Text weight="semibold" size={200} style={{ minWidth: 80 }}>
-                          {act.time || '—'}
+                        <Text weight="semibold" size={200} style={{ minWidth: 100 }}>
+                          {act.time ? (act.endTime ? `${act.time} – ${act.endTime}` : act.time) : '—'}
                         </Text>
                         <div style={{ flex: 1 }}>
                           <Text weight="semibold">{act.placeName || 'Untitled'}</Text>
@@ -675,13 +695,22 @@ export default function TripDetailPage() {
                 </DialogTitle>
                 <DialogContent>
                   <div className={styles.form}>
-                    <Field label="Time">
-                      <Input
-                        value={newActivity.time}
-                        onChange={(e, data) => setNewActivity((p) => ({ ...p, time: data.value }))}
-                        placeholder="e.g. 9:00 AM"
-                      />
-                    </Field>
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      <Field label="Start Time" style={{ flex: 1 }}>
+                        <Input
+                          value={newActivity.time}
+                          onChange={(e, data) => setNewActivity((p) => ({ ...p, time: data.value }))}
+                          placeholder="e.g. 9:00 AM"
+                        />
+                      </Field>
+                      <Field label="End Time" style={{ flex: 1 }}>
+                        <Input
+                          value={newActivity.endTime}
+                          onChange={(e, data) => setNewActivity((p) => ({ ...p, endTime: data.value }))}
+                          placeholder="e.g. 11:00 AM"
+                        />
+                      </Field>
+                    </div>
 
                     {/* Place picker */}
                     <Field label="Link a Place (optional)">
@@ -791,8 +820,8 @@ export default function TripDetailPage() {
           </Text>
 
           {canEdit && (
-            <div style={{ marginBottom: 16 }}>
-              <Field label="Add a place">
+            <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Field label="Search & add from global places">
                 <Input
                   placeholder="Search places..."
                   value={tripPlaceSearch}
@@ -834,6 +863,86 @@ export default function TripDetailPage() {
                   })}
                 </div>
               )}
+
+              <Divider />
+
+              <Button
+                icon={<Add24Regular />}
+                appearance="outline"
+                onClick={() => setCustomPlaceOpen(true)}
+              >
+                Add Custom Place
+              </Button>
+
+              <Dialog open={customPlaceOpen} onOpenChange={(e, data) => { if (!data.open) { setCustomPlaceOpen(false); setCustomPlaceForm({ name: '', city: '', country: '', type: '', notes: '', googleMapUrl: '' }); } }}>
+                <DialogSurface>
+                  <DialogBody>
+                    <DialogTitle>Add Custom Place</DialogTitle>
+                    <DialogContent>
+                      <div className={styles.form}>
+                        <Field label="Name" required>
+                          <Input
+                            value={customPlaceForm.name}
+                            onChange={(e, data) => setCustomPlaceForm((p) => ({ ...p, name: data.value }))}
+                            placeholder="Place name"
+                          />
+                        </Field>
+                        <Field label="Google Maps URL" required>
+                          <Input
+                            value={customPlaceForm.googleMapUrl}
+                            onChange={(e, data) => setCustomPlaceForm((p) => ({ ...p, googleMapUrl: data.value }))}
+                            placeholder="https://maps.google.com/..."
+                          />
+                        </Field>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <Field label="City" style={{ flex: 1 }}>
+                            <Input
+                              value={customPlaceForm.city}
+                              onChange={(e, data) => setCustomPlaceForm((p) => ({ ...p, city: data.value }))}
+                            />
+                          </Field>
+                          <Field label="Country" style={{ flex: 1 }}>
+                            <Input
+                              value={customPlaceForm.country}
+                              onChange={(e, data) => setCustomPlaceForm((p) => ({ ...p, country: data.value }))}
+                            />
+                          </Field>
+                        </div>
+                        <Field label="Type" required>
+                          <Dropdown
+                            value={customPlaceForm.type}
+                            selectedOptions={customPlaceForm.type ? [customPlaceForm.type] : []}
+                            onOptionSelect={(e, data) => setCustomPlaceForm((p) => ({ ...p, type: data.optionValue }))}
+                            placeholder="Select type"
+                          >
+                            <Option value="hotel">Hotel</Option>
+                            <Option value="attraction">Attraction</Option>
+                            <Option value="airport">Airport</Option>
+                            <Option value="station">Station</Option>
+                            <Option value="restaurant">Restaurant</Option>
+                            <Option value="shopping">Shopping</Option>
+                            <Option value="temple">Temple</Option>
+                            <Option value="beach">Beach</Option>
+                            <Option value="other">Other</Option>
+                          </Dropdown>
+                        </Field>
+                        <Field label="Notes">
+                          <Input
+                            value={customPlaceForm.notes}
+                            onChange={(e, data) => setCustomPlaceForm((p) => ({ ...p, notes: data.value }))}
+                          />
+                        </Field>
+                      </div>
+                    </DialogContent>
+                    <DialogActions>
+                      <DialogTrigger disableButtonEnhancement>
+                        <Button appearance="secondary">Cancel</Button>
+                      </DialogTrigger>
+                      <Button appearance="primary" onClick={handleAddCustomPlace} disabled={!customPlaceForm.name.trim() || !customPlaceForm.googleMapUrl.trim()}>Add</Button>
+                    </DialogActions>
+                  </DialogBody>
+                </DialogSurface>
+              </Dialog>
             </div>
           )}
 
@@ -845,22 +954,36 @@ export default function TripDetailPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {trip.places.map((place) => {
                 const p = typeof place === 'object' ? place : { _id: place, name: place };
+                const location = [p.city, p.country].filter(Boolean).join(', ');
                 return (
                   <div
                     key={p._id}
                     className={styles.memberRow}
                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                   >
-                    <div>
-                      <Text weight="semibold">{p.name}</Text>
-                      <Text size={200} style={{ marginLeft: 8 }}>
-                        {[p.city, p.country].filter(Boolean).join(', ')}
-                      </Text>
-                      {p.type && (
-                        <Badge appearance="outline" style={{ marginLeft: 8 }}>{p.type}</Badge>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <Text weight="semibold">{p.name}</Text>
+                        {p.custom && (
+                          <Badge appearance="outline" color="warning">Custom</Badge>
+                        )}
+                        {p.type && (
+                          <Badge appearance="outline" style={{ textTransform: 'capitalize' }}>{p.type}</Badge>
+                        )}
+                      </div>
+                      {location && (
+                        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>{location}</Text>
                       )}
-                      {p.fee && (
-                        <Text size={200} style={{ marginLeft: 8 }}>\u00a0\u00b7\u00a0{p.fee}</Text>
+                      {p.fee && p.fee !== 'Free' && (
+                        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>Fee: {p.fee}</Text>
+                      )}
+                      {p.notes && p.custom && (
+                        <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>{p.notes}</Text>
+                      )}
+                      {p.googleMapUrl && (
+                        <a href={p.googleMapUrl} target="_blank" rel="noopener noreferrer">
+                          <Button icon={<Location24Regular />} size="small" appearance="subtle">Map</Button>
+                        </a>
                       )}
                     </div>
                     {canEdit && (

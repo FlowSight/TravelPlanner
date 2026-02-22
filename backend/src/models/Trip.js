@@ -128,12 +128,17 @@ async function populateTripFull(trip) {
     }
   }
 
-  // Populate trip places list
+  // Populate trip places list (skip custom inline places)
   if (trip.places && trip.places.length) {
     const populatedPlaces = [];
-    for (const placeId of trip.places) {
-      const placeDoc = await Place.findById(placeId);
-      if (placeDoc) populatedPlaces.push(placeDoc);
+    for (const entry of trip.places) {
+      if (entry && typeof entry === 'object' && entry.custom) {
+        // Custom place — already inline, keep as-is
+        populatedPlaces.push(entry);
+      } else {
+        const placeDoc = await Place.findById(entry);
+        if (placeDoc) populatedPlaces.push(placeDoc);
+      }
     }
     trip.places = populatedPlaces;
   } else {

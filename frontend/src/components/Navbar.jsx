@@ -18,7 +18,6 @@ import {
   Airplane24Regular,
   SignOut24Regular,
   Person24Regular,
-  Map24Regular,
   Settings24Regular,
   ChevronDown20Regular,
 } from '@fluentui/react-icons';
@@ -65,13 +64,6 @@ export default function Navbar() {
       <div className={styles.rightSection}>
         {user ? (
           <>
-            <ToolbarButton
-              icon={<Map24Regular />}
-              onClick={() => navigate('/places')}
-              style={{ color: tokens.colorNeutralForegroundOnBrand }}
-            >
-              Places
-            </ToolbarButton>
             <ToolbarButton
               icon={<Airplane24Regular />}
               onClick={() => navigate('/trips')}
